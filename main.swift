@@ -376,11 +376,12 @@ final class CatOverlay {
         showing = true
         let screens = NSScreen.screens.isEmpty ? [NSScreen.main].compactMap { $0 } : NSScreen.screens
         let cat = resolveCat()
+        let dwell = 3.0   // 20 分钟那只：不压暗，停 3 秒
         windows = screens.map {
-            present(on: $0, message: message, frames: cat.frames, aspect: cat.aspect, pixelated: cat.pixelated)
+            present(on: $0, message: message, frames: cat.frames, aspect: cat.aspect, pixelated: cat.pixelated, dwell: dwell)
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 11.2) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0 + dwell + 2.4) { [weak self] in
             self?.windows.forEach { $0.orderOut(nil) }
             self?.windows = []
             self?.showing = false
@@ -493,10 +494,11 @@ final class CatOverlay {
         return out
     }
 
-    private func present(on screen: NSScreen, message: String, frames: [Any], aspect: CGFloat, pixelated: Bool) -> NSWindow {
+    private func present(on screen: NSScreen, message: String, frames: [Any], aspect: CGFloat, pixelated: Bool, dim: Bool = false, dwell: Double = 3.0) -> NSWindow {
         let sf = screen.frame
-        let H: CGFloat = 280
-        let frame = NSRect(x: sf.minX, y: sf.maxY - H, width: sf.width, height: H)
+        // 休息提醒：窗口铺满整屏（好做整屏压暗）；普通庆祝：只占顶部一条
+        let H: CGFloat = dim ? sf.height : 280
+        let frame = dim ? sf : NSRect(x: sf.minX, y: sf.maxY - H, width: sf.width, height: H)
 
         let win = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
         win.isOpaque = false; win.backgroundColor = .clear; win.hasShadow = false
@@ -508,9 +510,20 @@ final class CatOverlay {
         win.contentView = content
         let w = frame.width
 
+        // 休息提醒的柔和压暗背景（在最底层）
+        var dimLayer: CALayer?
+        if dim {
+            let d = CALayer()
+            d.frame = content.bounds
+            d.backgroundColor = NSColor.black.cgColor
+            d.opacity = 0
+            content.layer?.addSublayer(d)
+            dimLayer = d
+        }
+
         let catH: CGFloat = 75      // 猫的高度（比之前小一半）
         let catW = catH * aspect
-        let catY = H * 0.44
+        let catY = dim ? (frame.height - 150) : (H * 0.44)
         let centerX = w / 2
 
         let kitten = CALayer()
@@ -543,7 +556,7 @@ final class CatOverlay {
         content.layer?.addSublayer(bubble)
 
         win.orderFrontRegardless()
-        let dwell = 7.0   // 在中央停留时长
+        if let d = dimLayer { fade(d, to: 0.34, dur: 0.5) }   // 压暗淡入
 
         // 1) 走到屏幕中央（匀速 + 走路帧 + 轻微起伏）
         addBob(kitten, dur: 2.0)
@@ -559,6 +572,7 @@ final class CatOverlay {
             DispatchQueue.main.asyncAfter(deadline: .now() + dwell) {
                 kitten.removeAnimation(forKey: "idle")
                 self.fade(bubble, to: 0, dur: 0.3)
+                if let d = dimLayer { self.fade(d, to: 0, dur: 0.6) }   // 压暗淡出
                 // 3) 猫追着毛线团一起往右走出去
                 self.rollBallOff(ball, fromX: ballRestX, baseY: ballY, toX: w + ballSize)
                 self.addBob(kitten, dur: 1.8)
@@ -628,101 +642,23 @@ final class CatOverlay {
         l.add(a, forKey: "idle")
     }
 
-    // MARK: 休息提醒（柔和压暗 + 居中卡片）
+    // MARK: 休息提醒（整屏柔和压暗 + 玩球的猫走过来）
 
     func showRest(minutes: Int) {
         guard !showing else { return }
         showing = true
         let screens = NSScreen.screens.isEmpty ? [NSScreen.main].compactMap { $0 } : NSScreen.screens
         let cat = resolveCat()
+        let msg = "该休息一下啦 🐾 已专注 \(minutes) 分钟"
+        let dwell = 5.0   // 45 分钟那只：压暗，停 5 秒
         windows = screens.map {
-            presentRest(on: $0, minutes: minutes, catCG: cat.frames.first, aspect: cat.aspect, pixelated: cat.pixelated)
+            present(on: $0, message: msg, frames: cat.frames, aspect: cat.aspect, pixelated: cat.pixelated, dim: true, dwell: dwell)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6.4) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0 + dwell + 2.4) { [weak self] in
             self?.windows.forEach { $0.orderOut(nil) }
             self?.windows = []
             self?.showing = false
         }
-    }
-
-    private func presentRest(on screen: NSScreen, minutes: Int, catCG: Any?, aspect: CGFloat, pixelated: Bool) -> NSWindow {
-        let sf = screen.frame
-        let win = NSWindow(contentRect: sf, styleMask: .borderless, backing: .buffered, defer: false)
-        win.isOpaque = false; win.backgroundColor = .clear; win.hasShadow = false
-        win.level = .screenSaver; win.ignoresMouseEvents = true     // 不挡操作，温柔提醒
-        win.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        let content = NSView(frame: NSRect(origin: .zero, size: sf.size))
-        content.wantsLayer = true
-        win.contentView = content
-        let scale = screen.backingScaleFactor
-        let cx = sf.width / 2, cy = sf.height / 2
-
-        // 整屏柔和压暗
-        let dim = CALayer()
-        dim.frame = content.bounds
-        dim.backgroundColor = NSColor.black.cgColor
-        dim.opacity = 0
-        content.layer?.addSublayer(dim)
-
-        // 居中卡片
-        let cardW: CGFloat = 360, cardH: CGFloat = 250
-        let card = CALayer()
-        card.bounds = CGRect(x: 0, y: 0, width: cardW, height: cardH)
-        card.position = CGPoint(x: cx, y: cy)
-        card.backgroundColor = NSColor(white: 0.99, alpha: 1).cgColor
-        card.cornerRadius = 26
-        card.shadowColor = NSColor.black.cgColor; card.shadowOpacity = 0.25
-        card.shadowRadius = 24; card.shadowOffset = .zero
-        content.layer?.addSublayer(card)
-
-        // 猫
-        let catH: CGFloat = 110, catW = catH * aspect
-        let catLayer = CALayer()
-        catLayer.contents = catCG
-        if pixelated { catLayer.magnificationFilter = .nearest }
-        catLayer.contentsGravity = .resizeAspect
-        catLayer.bounds = CGRect(x: 0, y: 0, width: catW, height: catH)
-        catLayer.position = CGPoint(x: cardW / 2, y: cardH - 18 - catH / 2)
-        card.addSublayer(catLayer)
-
-        card.addSublayer(textLayer("该休息一下啦 🐾", size: 22, bold: true,
-                                   color: NSColor(white: 0.12, alpha: 1), centerY: cardH * 0.40, width: cardW, scale: scale))
-        card.addSublayer(textLayer("已专注 \(minutes) 分钟", size: 15, bold: false,
-                                   color: NSColor(white: 0.45, alpha: 1), centerY: cardH * 0.26, width: cardW, scale: scale))
-        card.addSublayer(textLayer("起来走走、看看远处 🌿", size: 14, bold: false,
-                                   color: NSColor(white: 0.5, alpha: 1), centerY: cardH * 0.13, width: cardW, scale: scale))
-
-        win.orderFrontRegardless()
-
-        // 淡入 + 卡片弹入
-        let dIn = CABasicAnimation(keyPath: "opacity"); dIn.fromValue = 0; dIn.toValue = 0.32; dIn.duration = 0.4
-        dim.opacity = 0.32; dim.add(dIn, forKey: "in")
-        let pop = CABasicAnimation(keyPath: "transform.scale"); pop.fromValue = 0.85; pop.toValue = 1
-        pop.duration = 0.45; pop.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        let fIn = CABasicAnimation(keyPath: "opacity"); fIn.fromValue = 0; fIn.toValue = 1; fIn.duration = 0.4
-        card.add(pop, forKey: "pop"); card.add(fIn, forKey: "fin")
-
-        // 停留 5 秒后淡出
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-            let o = CABasicAnimation(keyPath: "opacity"); o.fromValue = 0.32; o.toValue = 0; o.duration = 0.5
-            dim.opacity = 0; dim.add(o, forKey: "out")
-            let o2 = CABasicAnimation(keyPath: "opacity"); o2.fromValue = 1; o2.toValue = 0; o2.duration = 0.5
-            card.opacity = 0; card.add(o2, forKey: "out")
-        }
-        return win
-    }
-
-    private func textLayer(_ s: String, size: CGFloat, bold: Bool, color: NSColor,
-                           centerY: CGFloat, width: CGFloat, scale: CGFloat) -> CATextLayer {
-        let t = CATextLayer()
-        t.string = s
-        t.font = bold ? NSFont.boldSystemFont(ofSize: size) : NSFont.systemFont(ofSize: size)
-        t.fontSize = size
-        t.foregroundColor = color.cgColor
-        t.alignmentMode = .center
-        t.contentsScale = scale
-        t.frame = CGRect(x: 0, y: centerY - size * 0.7, width: width, height: size * 1.6)
-        return t
     }
 
     // MARK: 动画基元
@@ -786,7 +722,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private let tick: TimeInterval = 15
     private let idleReset: TimeInterval = 5 * 60       // 空闲多久算"休息"
-    private let overworkThreshold: TimeInterval = 30 * 60   // 连续使用多久开始提醒休息
+    private let overworkThreshold: TimeInterval = 45 * 60   // 连续使用多久开始提醒休息（压暗弹窗）
     private let protestGap: TimeInterval = 10 * 60     // 两次提醒最小间隔
 
     private var continuousActive: TimeInterval = 0     // 连续未休息时长
