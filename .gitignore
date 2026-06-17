@@ -1,0 +1,7 @@
+# 编译产物
+CatBreak.app/
+CatBreakReminder
+*.o
+
+# macOS
+.DS_Store
