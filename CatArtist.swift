@@ -367,7 +367,8 @@ struct CatArtist {
             NSColor(srgbRed: 0.95, green: 0.55, blue: 0.6, alpha: 1).setFill()
             NSBezierPath(ovalIn: CGRect(x: cx - r * 0.5, y: topY - r * 0.9,
                                         width: r, height: r * 0.8)).fill()
-        case .content, .neutral:
+        case .content:
+            // 微笑的 ω 嘴
             let p = NSBezierPath()
             p.move(to: CGPoint(x: cx, y: topY))
             p.line(to: CGPoint(x: cx, y: topY - S * 0.025))
@@ -378,6 +379,12 @@ struct CatArtist {
                             radius: r, startAngle: 180, endAngle: 360, clockwise: false)
                 a.lineWidth = S * 0.013; a.lineCapStyle = .round; a.stroke()
             }
+        case .neutral:
+            // 平平的直线嘴（一般）
+            let p = NSBezierPath()
+            p.move(to: CGPoint(x: cx - r * 0.95, y: topY - S * 0.03))
+            p.line(to: CGPoint(x: cx + r * 0.95, y: topY - S * 0.03))
+            p.lineWidth = S * 0.015; p.lineCapStyle = .round; p.stroke()
         case .sad, .angry:
             let p = NSBezierPath()
             p.appendArc(withCenter: CGPoint(x: cx, y: topY - S * 0.05),

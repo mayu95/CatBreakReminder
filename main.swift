@@ -153,6 +153,15 @@ final class GameModel {
         return "\(c.year ?? 0)-\(c.month ?? 0)-\(c.day ?? 0)"
     }
 
+    /// 跨天就把"今日专注"归零。每次轮询都调用，处理 app 跨午夜一直开着的情况（不只启动时）。
+    func rolloverIfNewDay() {
+        let today = Self.dayString()
+        if d.string(forKey: "todayDate") != today {
+            d.set(today, forKey: "todayDate")
+            todayProductive = 0   // didSet 会存盘；小鱼干/进度不受影响
+        }
+    }
+
     var title: String { titles[min(level - 1, titles.count - 1)] }
     var xpForNextLevel: Int { level * 50 }
 
@@ -720,7 +729,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private let popover = NSPopover()
     private var panel: PanelViewController!
 
-    private let tick: TimeInterval = 15
+    private let tick: TimeInterval = 60   // 轮询间隔：1 分钟（很省 CPU）
     private let idleReset: TimeInterval = 5 * 60       // 空闲多久算"休息"
     private let overworkThreshold: TimeInterval = 45 * 60   // 连续使用多久开始提醒休息（压暗弹窗）
     private let protestGap: TimeInterval = 10 * 60     // 两次提醒最小间隔
@@ -758,6 +767,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func onTick() {
+        model.rolloverIfNewDay()   // 跨午夜归零今日专注
+
         let now = Date()
         let delta = now.timeIntervalSince(lastTick)
         lastTick = now
