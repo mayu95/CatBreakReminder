@@ -105,7 +105,6 @@ final class GameModel {
     var level: Int { didSet { d.set(level, forKey: "level") } }
     var mood: Double { didSet { mood = min(100, max(0, mood)); d.set(mood, forKey: "mood") } }
     var totalFed: Int { didSet { d.set(totalFed, forKey: "totalFed") } }
-    var totalFocusBlocks: Int { didSet { d.set(totalFocusBlocks, forKey: "totalFocusBlocks") } }  // 累计完成的 20 分钟数
     var todayProductive: Double { didSet { d.set(todayProductive, forKey: "todayProductive") } }
 
     // 距下一条小鱼干的累计秒数（持久化，重启不丢）
@@ -125,7 +124,6 @@ final class GameModel {
         level = max(1, d.integer(forKey: "level"))
         mood = d.object(forKey: "mood") == nil ? 60 : d.double(forKey: "mood")
         totalFed = d.integer(forKey: "totalFed")
-        totalFocusBlocks = d.integer(forKey: "totalFocusBlocks")
 
         // 跨天则重置"今日专注"
         let today = Self.dayString()
@@ -134,18 +132,7 @@ final class GameModel {
             d.set(0.0, forKey: "todayProductive")
         }
         todayProductive = d.double(forKey: "todayProductive")
-
-        // 进度：有存就读；首次升级到本版本时，用今天已累计的专注时间补发小鱼干
-        if d.object(forKey: "productiveProgress") == nil {
-            let earned = Int(todayProductive / snackInterval)
-            if earned > 0 { snacks += earned; totalFocusBlocks += earned }
-            productiveProgress = todayProductive.truncatingRemainder(dividingBy: snackInterval)
-            d.set(snacks, forKey: "snacks")
-            d.set(totalFocusBlocks, forKey: "totalFocusBlocks")
-            d.set(productiveProgress, forKey: "productiveProgress")
-        } else {
-            productiveProgress = d.double(forKey: "productiveProgress")
-        }
+        productiveProgress = d.double(forKey: "productiveProgress")
     }
 
     static func dayString() -> String {
@@ -158,7 +145,7 @@ final class GameModel {
         let today = Self.dayString()
         if d.string(forKey: "todayDate") != today {
             d.set(today, forKey: "todayDate")
-            todayProductive = 0   // didSet 会存盘；小鱼干/进度不受影响
+            todayProductive = 0    // didSet 会存盘；小鱼干/经验/等级不受影响
         }
     }
 
@@ -183,7 +170,6 @@ final class GameModel {
         if productiveProgress >= snackInterval {
             productiveProgress -= snackInterval
             snacks += 1
-            totalFocusBlocks += 1
             return true
         }
         return false
@@ -367,7 +353,8 @@ final class PanelViewController: NSViewController {
         snackProgressBar.progress = CGFloat(model.productiveProgress / model.snackInterval)
         snackProgressText.stringValue = "距下一条：专注 \(mins) / \(total) 分钟"
         let tMin = Int(model.todayProductive / 60)
-        statsText.stringValue = "今日专注 \(tMin / 60)h\(tMin % 60)m　·　累计 \(model.totalFocusBlocks) 个 20 分钟"
+        let blocks = Int(model.todayProductive / model.snackInterval)
+        statsText.stringValue = "今日专注 \(tMin / 60)h\(tMin % 60)m　·　今日 \(blocks) 个 20 分钟"
         statusLabel.stringValue = model.statusText
         feedButton.isEnabled = model.snacks > 0
         preferredContentSize = view.fittingSize
@@ -398,7 +385,16 @@ final class CatOverlay {
     }
 
     /// 优先用 assets 里的猫图（朝左 → 镜像成朝右）；找不到才用代码画的兜底。
+    private var cachedCat: (frames: [Any], aspect: CGFloat, pixelated: Bool)?
+
     private func resolveCat() -> (frames: [Any], aspect: CGFloat, pixelated: Bool) {
+        if let c = cachedCat { return c }   // 只读图/对齐一次，之后复用
+        let result = loadAndNormalizeCat()
+        cachedCat = result
+        return result
+    }
+
+    private func loadAndNormalizeCat() -> (frames: [Any], aspect: CGFloat, pixelated: Bool) {
         var imgs: [NSImage] = []
         // cat.png 作为第 0 帧（若有）
         if let url = Bundle.main.url(forResource: "cat", withExtension: "png"), let img = NSImage(contentsOf: url) {

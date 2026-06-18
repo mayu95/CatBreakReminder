@@ -34,11 +34,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# 把 assets 里的猫图打包进 Resources（cat.png / cat_0.png…）
+# 把 assets 里的猫图打包进 Resources，并缩小到合适尺寸（显示只用 ~150px 高，原图过大白占空间）
 mkdir -p "$APP/Contents/Resources"
 if ls assets/*.png >/dev/null 2>&1; then
     cp assets/*.png "$APP/Contents/Resources/"
-    echo "已打包图片：$(ls assets/*.png | xargs -n1 basename | tr '\n' ' ')"
+    # 缩到最高 320px（足够清晰 + 对齐扫描也按 320 处理），保留透明；源文件 assets/ 不动
+    for f in "$APP/Contents/Resources/"*.png; do
+        sips --resampleHeightWidthMax 320 "$f" >/dev/null 2>&1 || true
+    done
+    echo "已打包并压缩图片：$(ls assets/*.png | xargs -n1 basename | tr '\n' ' ')"
 fi
 
 echo "完成 → $PWD/$APP"
