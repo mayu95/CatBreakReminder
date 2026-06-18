@@ -38,6 +38,17 @@ func mainDisplayAsleep() -> Bool {
     return CGDisplayIsAsleep(CGMainDisplayID()) != 0
 }
 
+/// 屏幕是否锁定（锁屏时黑屏但显示器未必"休眠"）。
+func screenLocked() -> Bool {
+    guard let dict = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+    return (dict["CGSSessionScreenIsLocked"] as? Int) == 1
+}
+
+/// 屏幕不可用（黑屏/锁屏）——此时不该计时。
+func screenUnavailable() -> Bool {
+    return mainDisplayAsleep() || screenLocked()
+}
+
 /// 默认输入设备（麦克风）当前是否正在被某进程使用。开会/通话的最强信号。
 func microphoneInUse() -> Bool {
     var deviceID = AudioDeviceID(0)
@@ -363,18 +374,20 @@ final class PanelViewController: NSViewController {
 
 // MARK: - 小黑猫玩球浮层（走过来 → 拨球 → 溜走，所有屏幕同时出现）
 
+enum CatToy { case ball, fish }   // 提醒玩毛线团；喂食玩小鱼干
+
 final class CatOverlay {
     private var windows: [NSWindow] = []
     private var showing = false
 
-    func show(message: String) {
+    func show(message: String, toy: CatToy = .ball) {
         guard !showing else { return }
         showing = true
         let screens = NSScreen.screens.isEmpty ? [NSScreen.main].compactMap { $0 } : NSScreen.screens
         let cat = resolveCat()
         let dwell = 3.0   // 20 分钟那只：不压暗，停 3 秒
         windows = screens.map {
-            present(on: $0, message: message, frames: cat.frames, aspect: cat.aspect, pixelated: cat.pixelated, dwell: dwell)
+            present(on: $0, message: message, frames: cat.frames, aspect: cat.aspect, pixelated: cat.pixelated, dwell: dwell, toy: toy)
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0 + dwell + 2.4) { [weak self] in
@@ -499,7 +512,7 @@ final class CatOverlay {
         return out
     }
 
-    private func present(on screen: NSScreen, message: String, frames: [Any], aspect: CGFloat, pixelated: Bool, dim: Bool = false, dwell: Double = 3.0) -> NSWindow {
+    private func present(on screen: NSScreen, message: String, frames: [Any], aspect: CGFloat, pixelated: Bool, dim: Bool = false, dwell: Double = 3.0, toy: CatToy = .ball) -> NSWindow {
         let sf = screen.frame
         // 休息提醒：窗口铺满整屏（好做整屏压暗）；普通庆祝：只占顶部一条
         let H: CGFloat = dim ? sf.height : 280
@@ -545,7 +558,8 @@ final class CatOverlay {
         let ballRestX = centerX + catW * 0.42
         let ballY = catY - catH * 0.26
         let ball = CALayer()
-        ball.contents = CatArtist.ball(side: ballSize).cgImage(forProposedRect: nil, context: nil, hints: nil)
+        let toyImg = (toy == .fish) ? CatArtist.fish(side: ballSize) : CatArtist.ball(side: ballSize)
+        ball.contents = toyImg.cgImage(forProposedRect: nil, context: nil, hints: nil)
         ball.contentsGravity = .resizeAspect
         ball.bounds = CGRect(x: 0, y: 0, width: ballSize, height: ballSize)
         ball.anchorPoint = CGPoint(x: 0.5, y: 0.5)
@@ -769,11 +783,22 @@ final class AppController: NSObject, NSApplicationDelegate {
         let delta = now.timeIntervalSince(lastTick)
         lastTick = now
 
+        // 系统睡眠/挂起后唤醒：delta 会很大（轮询期间没跑），那段时间不算，当作休息。
+        if delta > tick * 2.5 {
+            if continuousActive >= overworkThreshold { model.restRecover() }
+            continuousActive = 0
+            model.isOverworked = false
+            model.statusText = "💤 刚唤醒（已休息）"
+            updateStatusIcon(); model.save()
+            if popover.isShown { panel.refresh() }
+            return
+        }
+
         let idle = systemIdleSeconds()
         let meeting = inMeetingOrPresenting()
-        // "屏幕亮着 + 在用" 就算工作：有键鼠输入，或正在开会/演示（即使没敲键盘）。
-        // 主屏副屏都算；屏幕休眠则不算。
-        let active = !mainDisplayAsleep() && (idle < idleReset || meeting)
+        // "屏幕亮着 + 在用" 才算工作：有键鼠输入，或正在开会/演示（即使没敲键盘）。
+        // 主屏副屏都算；屏幕黑屏/锁屏则不算。
+        let active = !screenUnavailable() && (idle < idleReset || meeting)
 
         model.decayMood(delta)
 
@@ -782,12 +807,13 @@ final class AppController: NSObject, NSApplicationDelegate {
             if continuousActive >= overworkThreshold { model.restRecover() }
             continuousActive = 0
             model.isOverworked = false
-            model.statusText = mainDisplayAsleep() ? "💤 屏幕已休眠" : "💤 离开中（已休息）"
+            model.statusText = screenUnavailable() ? "💤 屏幕黑屏/锁屏" : "💤 离开中（已休息）"
         } else {
             continuousActive += delta
 
             // 计分：任何使用都加分（开会也算工作）。
-            if model.addProductive(delta) {
+            // 但开会/摄像头/麦克风/全屏演示时不弹动画（避免打断、避免屏幕共享时被别人看到），小鱼干照常入账。
+            if model.addProductive(delta) && !meeting {
                 overlay.show(message: "叮！专注满 20 分钟，获得一条小鱼干 🐟")
             }
 
@@ -816,7 +842,10 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func feed() {
         if model.feed() {
-            overlay.show(message: "好好吃喵～谢谢投喂！")
+            // 开会/演示时不弹喂食动画（避免屏幕共享被看到），但喂食本身照常生效
+            if !inMeetingOrPresenting() {
+                overlay.show(message: "好好吃喵～谢谢投喂！", toy: .fish)
+            }
         }
         updateStatusIcon()
         model.save()

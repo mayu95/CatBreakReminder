@@ -214,6 +214,55 @@ struct CatArtist {
         }
     }
 
+    /// 一条小鱼干（喂食动画用）。朝右，淡橙棕色。
+    static func fish(side S: CGFloat) -> NSImage {
+        render(width: S, height: S) {
+            let body = NSColor(srgbRed: 0.93, green: 0.66, blue: 0.42, alpha: 1)
+            let edge = NSColor(srgbRed: 0.74, green: 0.46, blue: 0.26, alpha: 1)
+            let cx = S * 0.54, cy = S * 0.5
+            let bw = S * 0.34, bh = S * 0.19   // 身体半宽/半高
+
+            // 尾巴（左侧三角）
+            let tail = NSBezierPath()
+            tail.move(to: CGPoint(x: cx - bw * 0.7, y: cy))
+            tail.line(to: CGPoint(x: cx - bw * 1.5, y: cy + bh * 1.1))
+            tail.line(to: CGPoint(x: cx - bw * 1.5, y: cy - bh * 1.1))
+            tail.close()
+            body.setFill(); tail.fill()
+            edge.setStroke(); tail.lineWidth = S * 0.012; tail.stroke()
+
+            // 身体
+            let bodyPath = NSBezierPath(ovalIn: CGRect(x: cx - bw, y: cy - bh, width: bw * 2, height: bh * 2))
+            body.setFill(); bodyPath.fill()
+            edge.setStroke(); bodyPath.lineWidth = S * 0.012; bodyPath.stroke()
+
+            // 背鳍
+            let fin = NSBezierPath()
+            fin.move(to: CGPoint(x: cx - bw * 0.3, y: cy + bh * 0.85))
+            fin.curve(to: CGPoint(x: cx + bw * 0.35, y: cy + bh * 0.8),
+                      controlPoint1: CGPoint(x: cx, y: cy + bh * 1.7),
+                      controlPoint2: CGPoint(x: cx + bw * 0.25, y: cy + bh * 1.5))
+            fin.close()
+            body.blended(withFraction: 0.12, of: .black)?.setFill(); fin.fill()
+
+            // 鳃线
+            edge.setStroke()
+            let gill = NSBezierPath()
+            gill.move(to: CGPoint(x: cx + bw * 0.35, y: cy + bh * 0.65))
+            gill.curve(to: CGPoint(x: cx + bw * 0.35, y: cy - bh * 0.65),
+                       controlPoint1: CGPoint(x: cx + bw * 0.15, y: cy),
+                       controlPoint2: CGPoint(x: cx + bw * 0.15, y: cy))
+            gill.lineWidth = S * 0.012; gill.stroke()
+
+            // 眼睛（靠右=头部）
+            NSColor(white: 0.15, alpha: 1).setFill()
+            let er = S * 0.03
+            NSBezierPath(ovalIn: CGRect(x: cx + bw * 0.55 - er, y: cy + bh * 0.15 - er, width: er * 2, height: er * 2)).fill()
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: CGRect(x: cx + bw * 0.55 - er * 0.2, y: cy + bh * 0.15 + er * 0.1, width: er * 0.7, height: er * 0.7)).fill()
+        }
+    }
+
     // MARK: - 绘制（坐标原点左下，单位 = 点）
 
     private static func draw(level: Int, mood: Double, overworked: Bool, S: CGFloat) {
