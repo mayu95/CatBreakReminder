@@ -110,16 +110,12 @@ func inMeetingOrPresenting() -> Bool {
 final class GameModel {
     private let d = UserDefaults.standard
 
-    // 持久化状态
+    // 每日状态（每天全部归零）
     var snacks: Int { didSet { d.set(snacks, forKey: "snacks") } }
-    var xp: Int { didSet { d.set(xp, forKey: "xp") } }
-    var level: Int { didSet { d.set(level, forKey: "level") } }
     var mood: Double { didSet { mood = min(100, max(0, mood)); d.set(mood, forKey: "mood") } }
-    var totalFed: Int { didSet { d.set(totalFed, forKey: "totalFed") } }
     var todayProductive: Double { didSet { d.set(todayProductive, forKey: "todayProductive") } }
-
-    // 距下一条小鱼干的累计秒数（持久化，重启不丢）
-    var productiveProgress: Double = 0 { didSet { d.set(productiveProgress, forKey: "productiveProgress") } }
+    var productiveProgress: Double = 0 { didSet { d.set(productiveProgress, forKey: "productiveProgress") } }  // 距下条小鱼干
+    var overtimeCount: Int = 0 { didSet { d.set(overtimeCount, forKey: "overtimeCount") } }  // 今日"连续干超45分钟没歇"的次数
 
     // 瞬时状态（不持久化）
     var statusText: String = "启动中…"
@@ -127,23 +123,22 @@ final class GameModel {
 
     let snackInterval: Double = 20 * 60    // 攒一条小鱼干需要的专注秒数
 
-    private let titles = ["幼猫", "奶猫", "小猫", "少年猫", "成年猫", "猫绅士", "猫老大", "猫王"]
+    // 种类档位：今日专注分钟阈值 → 0..9
+    private let tierMinutes: [Double] = [0, 20, 45, 75, 110, 150, 195, 245, 300, 360]
+    private let tierTitles = ["刚睡醒猫", "幼猫", "奶猫", "小猫", "机灵猫", "学徒猫", "专注猫", "大师猫", "猫老大", "猫王"]
 
     init() {
-        snacks = d.integer(forKey: "snacks")
-        xp = d.integer(forKey: "xp")
-        level = max(1, d.integer(forKey: "level"))
-        mood = d.object(forKey: "mood") == nil ? 60 : d.double(forKey: "mood")
-        totalFed = d.integer(forKey: "totalFed")
-
-        // 跨天则重置"今日专注"
         let today = Self.dayString()
-        if d.string(forKey: "todayDate") != today {
+        if d.string(forKey: "todayDate") != today {     // 新的一天：全部重置，养一只新猫
             d.set(today, forKey: "todayDate")
-            d.set(0.0, forKey: "todayProductive")
+            for k in ["snacks", "todayProductive", "productiveProgress", "overtimeCount"] { d.removeObject(forKey: k) }
+            d.set(60.0, forKey: "mood")
         }
+        snacks = d.integer(forKey: "snacks")
+        mood = d.object(forKey: "mood") == nil ? 60 : d.double(forKey: "mood")
         todayProductive = d.double(forKey: "todayProductive")
         productiveProgress = d.double(forKey: "productiveProgress")
+        overtimeCount = d.integer(forKey: "overtimeCount")
     }
 
     static func dayString() -> String {
@@ -151,27 +146,46 @@ final class GameModel {
         return "\(c.year ?? 0)-\(c.month ?? 0)-\(c.day ?? 0)"
     }
 
-    /// 跨天就把"今日专注"归零。每次轮询都调用，处理 app 跨午夜一直开着的情况（不只启动时）。
+    /// 跨天：全部归零，养一只全新的猫。每次轮询都调用（处理 app 跨午夜一直开着）。
     func rolloverIfNewDay() {
         let today = Self.dayString()
         if d.string(forKey: "todayDate") != today {
             d.set(today, forKey: "todayDate")
-            todayProductive = 0    // didSet 会存盘；小鱼干/经验/等级不受影响
+            snacks = 0; mood = 60; todayProductive = 0; productiveProgress = 0; overtimeCount = 0
+            isOverworked = false
         }
     }
 
-    var title: String { titles[min(level - 1, titles.count - 1)] }
-    var xpForNextLevel: Int { level * 50 }
+    // 今日种类（评级）：由专注时长决定，按时休息影响顶档/降档
+    var tier: Int {
+        let mins = todayProductive / 60
+        var t = 0
+        for (i, m) in tierMinutes.enumerated() where mins >= m { t = i }
+        if overtimeCount >= 5 { t = max(0, t - 1) }            // 没好好休息：降一档
+        if t >= 9 && overtimeCount > 3 { t = 8 }               // 猫王需超时 ≤3 次
+        return t
+    }
+    var tierTitle: String { tierTitles[min(tier, tierTitles.count - 1)] }
+    var maxTier: Int { tierTitles.count - 1 }
+    var restGood: Bool { overtimeCount <= 3 }
 
-    /// 一条小鱼干喂下去给多少经验：等级越低给得越多（一开始升级快），逐渐变少。
-    var xpPerFeed: Int { max(8, 32 - (level - 1) * 4) }
+    /// 距下一种类还需多少分钟（到顶返回 nil）。
+    var minutesToNextTier: Int? {
+        let mins = todayProductive / 60
+        var t = 0
+        for (i, m) in tierMinutes.enumerated() where mins >= m { t = i }
+        guard t < tierMinutes.count - 1 else { return nil }
+        return max(0, Int(ceil(tierMinutes[t + 1] - mins)))
+    }
 
-    /// 升级判定。
-    private func checkLevelUp() {
-        while xp >= xpForNextLevel {
-            xp -= xpForNextLevel
-            level += 1
-        }
+    /// 当前种类段内的进度 0..1（用于进度条）。
+    var tierProgress: Double {
+        let mins = todayProductive / 60
+        var t = 0
+        for (i, m) in tierMinutes.enumerated() where mins >= m { t = i }
+        guard t < tierMinutes.count - 1 else { return 1 }
+        let lo = tierMinutes[t], hi = tierMinutes[t + 1]
+        return min(1, max(0, (mins - lo) / (hi - lo)))
     }
 
     /// 累计专注时间，满 20 分钟产出一条小鱼干。返回这次是否赚到了零食。
@@ -186,14 +200,11 @@ final class GameModel {
         return false
     }
 
-    /// 喂一条小鱼干。返回是否喂成功（有库存）。经验只在这里产生。
+    /// 喂一条小鱼干 → 只涨心情（种类由专注时间决定，与喂食无关）。
     func feed() -> Bool {
         guard snacks > 0 else { return false }
         snacks -= 1
-        totalFed += 1
         mood += 25
-        xp += xpPerFeed
-        checkLevelUp()
         return true
     }
 
@@ -257,8 +268,8 @@ final class PanelViewController: NSViewController {
     private let titleLabel = NSTextField(labelWithString: "")
     private let moodBar = BarView()
     private let moodText = NSTextField(labelWithString: "")
-    private let xpBar = BarView()
-    private let xpText = NSTextField(labelWithString: "")
+    private let tierBar = BarView()
+    private let tierText = NSTextField(labelWithString: "")
     private let snackLabel = NSTextField(labelWithString: "")
     private let snackProgressBar = BarView()
     private let snackProgressText = NSTextField(labelWithString: "")
@@ -280,10 +291,10 @@ final class PanelViewController: NSViewController {
         catView.widthAnchor.constraint(equalToConstant: 84).isActive = true
         catView.heightAnchor.constraint(equalToConstant: 84).isActive = true
 
-        titleLabel.font = .boldSystemFont(ofSize: 15)
+        titleLabel.font = .boldSystemFont(ofSize: 17)
         titleLabel.alignment = .center
         moodText.font = .systemFont(ofSize: 11)
-        xpText.font = .systemFont(ofSize: 11)
+        tierText.font = .systemFont(ofSize: 11)
         snackLabel.font = .boldSystemFont(ofSize: 14)
         snackProgressText.font = .systemFont(ofSize: 11)
         snackProgressText.textColor = .secondaryLabelColor
@@ -295,9 +306,9 @@ final class PanelViewController: NSViewController {
         statusLabel.lineBreakMode = .byTruncatingTail
 
         moodBar.color = .systemPink
-        xpBar.color = .systemBlue
+        tierBar.color = .systemBlue
         snackProgressBar.color = .systemOrange
-        for b in [moodBar, xpBar, snackProgressBar] {
+        for b in [moodBar, tierBar, snackProgressBar] {
             b.translatesAutoresizingMaskIntoConstraints = false
             b.heightAnchor.constraint(equalToConstant: 9).isActive = true
             b.widthAnchor.constraint(equalToConstant: 140).isActive = true
@@ -319,8 +330,8 @@ final class PanelViewController: NSViewController {
         let stack = NSStackView(views: [
             catView,
             titleLabel,
+            row(tierText, tierBar),
             row(moodText, moodBar),
-            row(xpText, xpBar),
             snackLabel,
             snackProgressBar,
             snackProgressText,
@@ -351,21 +362,26 @@ final class PanelViewController: NSViewController {
     @objc private func feedTapped() { feedAction?() }
 
     func refresh() {
-        catView.image = CatArtist.image(level: model.level, mood: model.mood,
+        catView.image = CatArtist.image(tier: model.tier, mood: model.mood,
                                         overworked: model.isOverworked, side: 84)
-        titleLabel.stringValue = "Lv.\(model.level) \(model.title)"
+        titleLabel.stringValue = "\(model.tierTitle)　第 \(model.tier)/\(model.maxTier) 阶"
+        // 距下一种类
+        if let toNext = model.minutesToNextTier {
+            tierText.stringValue = "下一种还需 \(toNext) 分钟"
+            tierBar.progress = CGFloat(model.tierProgress)
+        } else {
+            tierText.stringValue = "已封顶 🎉"
+            tierBar.progress = 1
+        }
         moodText.stringValue = "心情 \(model.moodWord)"
         moodBar.progress = CGFloat(model.mood / 100)
-        xpText.stringValue = "经验 \(model.xp)/\(model.xpForNextLevel)"
-        xpBar.progress = CGFloat(Double(model.xp) / Double(model.xpForNextLevel))
         snackLabel.stringValue = "🐟 小鱼干 × \(model.snacks)"
         let mins = Int(model.productiveProgress / 60)
         let total = Int(model.snackInterval / 60)
         snackProgressBar.progress = CGFloat(model.productiveProgress / model.snackInterval)
         snackProgressText.stringValue = "距下一条：专注 \(mins) / \(total) 分钟"
         let tMin = Int(model.todayProductive / 60)
-        let blocks = Int(model.todayProductive / model.snackInterval)
-        statsText.stringValue = "今日专注 \(tMin / 60)h\(tMin % 60)m　·　今日 \(blocks) 个 20 分钟"
+        statsText.stringValue = "今日专注 \(tMin / 60)h\(tMin % 60)m　·　\(model.restGood ? "休息良好" : "休息欠佳")（超时 \(model.overtimeCount) 次）"
         statusLabel.stringValue = model.statusText
         feedButton.isEnabled = model.snacks > 0
         preferredContentSize = view.fittingSize
@@ -766,7 +782,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func catImage(side: CGFloat) -> NSImage {
-        CatArtist.image(level: model.level, mood: model.mood, overworked: model.isOverworked, side: side)
+        CatArtist.image(tier: model.tier, mood: model.mood, overworked: model.isOverworked, side: side)
     }
 
     private func updateStatusIcon() {
@@ -817,8 +833,9 @@ final class AppController: NSObject, NSApplicationDelegate {
                 overlay.show(message: "叮！专注满 20 分钟，获得一条小鱼干 🐟")
             }
 
-            // 休息提醒：连续 30 分钟提醒；但开会/摄像头/麦克风/PPT 全屏时不打扰，憋到结束再提醒。
+            // 休息提醒：连续 45 分钟提醒；但开会/摄像头/麦克风/PPT 全屏时不打扰，憋到结束再提醒。
             if continuousActive >= overworkThreshold {
+                if !model.isOverworked { model.overtimeCount += 1 }   // 新一次"超时没歇"，计入评级
                 model.isOverworked = true
                 if meeting {
                     model.statusText = "🎤 开会/演示中（计入工作，先不打扰）"

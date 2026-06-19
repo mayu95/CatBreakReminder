@@ -17,22 +17,24 @@ struct CatArtist {
         }
     }
 
-    /// 等级毛色。
-    static func furColor(level: Int) -> NSColor {
+    /// 种类毛色（0..9）。
+    static func furColor(tier: Int) -> NSColor {
         let palette: [NSColor] = [
-            NSColor(srgbRed: 0.80, green: 0.80, blue: 0.84, alpha: 1),  // 1 幼猫 浅灰
+            NSColor(srgbRed: 0.86, green: 0.86, blue: 0.89, alpha: 1),  // 0 刚睡醒 极浅灰
+            NSColor(srgbRed: 0.78, green: 0.78, blue: 0.82, alpha: 1),  // 1 幼猫 浅灰
             NSColor(srgbRed: 0.96, green: 0.86, blue: 0.70, alpha: 1),  // 2 奶猫 奶油
             NSColor(srgbRed: 0.95, green: 0.64, blue: 0.30, alpha: 1),  // 3 小猫 橘
-            NSColor(srgbRed: 0.72, green: 0.48, blue: 0.25, alpha: 1),  // 4 少年猫 棕
-            NSColor(srgbRed: 0.57, green: 0.65, blue: 0.71, alpha: 1),  // 5 成年猫 灰蓝
-            NSColor(srgbRed: 0.34, green: 0.34, blue: 0.39, alpha: 1),  // 6 猫绅士 炭灰
-            NSColor(srgbRed: 0.91, green: 0.72, blue: 0.16, alpha: 1),  // 7 猫老大 金
-            NSColor(srgbRed: 0.17, green: 0.17, blue: 0.20, alpha: 1),  // 8 猫王 黑
+            NSColor(srgbRed: 0.72, green: 0.48, blue: 0.25, alpha: 1),  // 4 机灵猫 棕
+            NSColor(srgbRed: 0.53, green: 0.69, blue: 0.66, alpha: 1),  // 5 学徒猫 青灰
+            NSColor(srgbRed: 0.44, green: 0.55, blue: 0.73, alpha: 1),  // 6 专注猫 蓝
+            NSColor(srgbRed: 0.34, green: 0.34, blue: 0.40, alpha: 1),  // 7 大师猫 炭灰
+            NSColor(srgbRed: 0.91, green: 0.72, blue: 0.16, alpha: 1),  // 8 猫老大 金
+            NSColor(srgbRed: 0.17, green: 0.17, blue: 0.21, alpha: 1),  // 9 猫王 黑
         ]
-        return palette[min(max(level - 1, 0), palette.count - 1)]
+        return palette[min(max(tier, 0), palette.count - 1)]
     }
 
-    static func image(level: Int, mood: Double, overworked: Bool, side: CGFloat) -> NSImage {
+    static func image(tier: Int, mood: Double, overworked: Bool, side: CGFloat) -> NSImage {
         let scale: CGFloat = 2
         let px = Int(side * scale)
         let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px,
@@ -45,7 +47,7 @@ struct CatArtist {
         let ctx = NSGraphicsContext(bitmapImageRep: rep)!
         NSGraphicsContext.current = ctx
         // rep.size 已把坐标系设为「点」，直接按 side 绘制即可（retina 由 pixelsWide 负责）。
-        draw(level: level, mood: mood, overworked: overworked, S: side)
+        draw(tier: tier, mood: mood, overworked: overworked, S: side)
         NSGraphicsContext.restoreGraphicsState()
 
         let img = NSImage(size: NSSize(width: side, height: side))
@@ -265,8 +267,8 @@ struct CatArtist {
 
     // MARK: - 绘制（坐标原点左下，单位 = 点）
 
-    private static func draw(level: Int, mood: Double, overworked: Bool, S: CGFloat) {
-        let fur = furColor(level: level)
+    private static func draw(tier: Int, mood: Double, overworked: Bool, S: CGFloat) {
+        let fur = furColor(tier: tier)
         let dark = fur.blended(withFraction: 0.30, of: .black) ?? fur
         let light = fur.blended(withFraction: 0.62, of: .white) ?? fur
         let isDarkFur = fur.brightnessApprox < 0.45
@@ -276,8 +278,10 @@ struct CatArtist {
         let hw = S * 0.345, hh = S * 0.315
         let exp = expression(mood: mood, overworked: overworked)
 
-        // 等级 ≥7 戴皇冠（先画，被耳朵/头压住底部）
-        if level >= 7 { drawCrown(cx: cx, y: cy + hh + S * 0.10, S: S) }
+        // 披风（最底层，猫王专属）
+        if tier >= 9 { drawCape(cx: cx, cy: cy, hw: hw, hh: hh, S: S) }
+        // 皇冠（tier ≥8，先画，被耳朵/头压住底部）
+        if tier >= 8 { drawCrown(cx: cx, y: cy + hh + S * 0.10, S: S) }
 
         // 耳朵
         drawEar(left: true, cx: cx, cy: cy, hw: hw, hh: hh, fur: fur, dark: dark, S: S)
@@ -315,9 +319,9 @@ struct CatArtist {
             }
         }
 
-        // 眼睛（猫王戴墨镜，跳过普通眼）
+        // 眼睛（大师猫 tier7 戴墨镜，跳过普通眼）
         let eyeY = cy + S * 0.045, eyeDX = S * 0.15
-        if level >= 8 {
+        if tier == 7 {
             drawSunglasses(cx: cx, eyeY: eyeY, eyeDX: eyeDX, S: S)
         } else {
             drawEyes(exp: exp, cx: cx, eyeY: eyeY, eyeDX: eyeDX, S: S, ink: ink)
@@ -336,8 +340,42 @@ struct CatArtist {
         // 嘴
         drawMouth(exp: exp, cx: cx, topY: noseY - nw * 1.1, S: S, ink: ink)
 
-        // 等级 ≥6 戴领结
-        if level >= 6 { drawBowtie(cx: cx, y: cy - hh * 0.92, S: S) }
+        // 配饰：学徒猫围巾 / 专注猫领结
+        if tier == 5 { drawScarf(cx: cx, y: cy - hh * 0.86, S: S) }
+        if tier == 6 { drawBowtie(cx: cx, y: cy - hh * 0.92, S: S) }
+    }
+
+    /// 围巾（学徒猫）。
+    private static func drawScarf(cx: CGFloat, y: CGFloat, S: CGFloat) {
+        let red = NSColor(srgbRed: 0.86, green: 0.27, blue: 0.30, alpha: 1)
+        let dark = NSColor(srgbRed: 0.70, green: 0.18, blue: 0.22, alpha: 1)
+        // 绕脖子的带子
+        let band = NSBezierPath(roundedRect: CGRect(x: cx - S * 0.20, y: y - S * 0.045, width: S * 0.40, height: S * 0.09),
+                                xRadius: S * 0.045, yRadius: S * 0.045)
+        red.setFill(); band.fill()
+        // 垂下来的一截
+        let tail = NSBezierPath(roundedRect: CGRect(x: cx + S * 0.02, y: y - S * 0.20, width: S * 0.085, height: S * 0.18),
+                                xRadius: S * 0.04, yRadius: S * 0.04)
+        dark.setFill(); tail.fill()
+    }
+
+    /// 披风（猫王）。画在最底层，从肩膀垂下。
+    private static func drawCape(cx: CGFloat, cy: CGFloat, hw: CGFloat, hh: CGFloat, S: CGFloat) {
+        let cape = NSBezierPath()
+        cape.move(to: CGPoint(x: cx - hw * 0.7, y: cy + hh * 0.2))
+        cape.line(to: CGPoint(x: cx - hw * 1.25, y: cy - hh * 1.5))
+        cape.curve(to: CGPoint(x: cx + hw * 1.25, y: cy - hh * 1.5),
+                   controlPoint1: CGPoint(x: cx - hw * 0.4, y: cy - hh * 1.85),
+                   controlPoint2: CGPoint(x: cx + hw * 0.4, y: cy - hh * 1.85))
+        cape.line(to: CGPoint(x: cx + hw * 0.7, y: cy + hh * 0.2))
+        cape.close()
+        NSColor(srgbRed: 0.55, green: 0.16, blue: 0.62, alpha: 1).setFill(); cape.fill()
+        NSColor(srgbRed: 0.42, green: 0.10, blue: 0.48, alpha: 1).setStroke()
+        cape.lineWidth = S * 0.012; cape.stroke()
+        // 领口金边
+        let collar = NSBezierPath(roundedRect: CGRect(x: cx - hw * 0.75, y: cy + hh * 0.05, width: hw * 1.5, height: S * 0.06),
+                                  xRadius: S * 0.03, yRadius: S * 0.03)
+        NSColor(srgbRed: 1.0, green: 0.82, blue: 0.2, alpha: 1).setFill(); collar.fill()
     }
 
     private static func drawEar(left: Bool, cx: CGFloat, cy: CGFloat, hw: CGFloat, hh: CGFloat,
