@@ -124,7 +124,7 @@ final class GameModel {
     let snackInterval: Double = 20 * 60    // 攒一条小鱼干需要的专注秒数
 
     // 种类档位：今日专注分钟阈值 → 0..9
-    private let tierMinutes: [Double] = [0, 20, 45, 75, 110, 150, 195, 245, 300, 360]
+    private let tierMinutes: [Double] = [0, 30, 60, 100, 150, 200, 260, 320, 360, 480]   // 6h=优秀(猫老大), 8h=满分(猫王)
     private let tierTitles = ["刚睡醒猫", "幼猫", "奶猫", "小猫", "机灵猫", "学徒猫", "专注猫", "大师猫", "猫老大", "猫王"]
 
     init() {
