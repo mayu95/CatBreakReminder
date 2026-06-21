@@ -72,11 +72,17 @@
 ## 构建 & 运行
 
 ```bash
-./build.sh           # 生成 CatBreak.app（约 300KB）
+./build.sh           # 生成 CatBreak.app（约 300KB），版本号取自 VERSION 文件
 open CatBreak.app     # 启动，菜单栏出现小猫
 ```
 前台调试：`./CatBreak.app/Contents/MacOS/CatBreakReminder`
 开机自启：「系统设置 → 登录项」加 CatBreak.app。
+
+## 版本更新
+
+app 启动 + 每 12 小时会拉一次仓库根的 `VERSION` 文件，比当前版本新就在**右键菜单顶部**提示「🆕 有新版」（点击打开仓库），离线则静默跳过。更新方式：`git pull && ./build.sh`。
+
+发版时把 `VERSION` 文件和 `main.swift` 里的 `appVersion` 一起改成新号再推即可。
 
 ## 可调参数（`main.swift` 顶部）
 

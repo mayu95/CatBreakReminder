@@ -5,8 +5,9 @@ cd "$(dirname "$0")"
 
 APP="CatBreak.app"
 EXEC="CatBreakReminder"
+VER=$(tr -d '[:space:]' < VERSION 2>/dev/null); VER=${VER:-1.0}   # 版本号取自 VERSION 文件
 
-echo "编译中…"
+echo "编译中… (v$VER)"
 swiftc -O main.swift CatArtist.swift -o "$EXEC"
 
 echo "组装 .app …"
@@ -22,8 +23,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key><string>CatBreak</string>
     <key>CFBundleDisplayName</key><string>小猫休息提醒</string>
     <key>CFBundleIdentifier</key><string>com.catbreak.app</string>
-    <key>CFBundleVersion</key><string>1.0</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>$VER</string>
+    <key>CFBundleShortVersionString</key><string>$VER</string>
     <key>CFBundleExecutable</key><string>$EXEC</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>

@@ -87,15 +87,28 @@ func cameraInUse() -> Bool {
     return false
 }
 
-/// 是否有窗口铺满整块屏幕（PPT 放映 / 全屏演示）。
+/// 是否有窗口真·全屏铺满某一整块显示器（PPT 放映 / 全屏演示 / 全屏视频）。
+/// 注意：要求"位置 + 尺寸几乎完全等于该显示器的完整 bounds"——不能只看"比某块屏大"，
+/// 否则多屏尺寸不同时，大屏上的普通窗口会被误判成全屏。
 func fullscreenWindowPresent() -> Bool {
+    // 各显示器的完整 bounds（CG 坐标，含菜单栏区域）
+    var count: UInt32 = 0
+    CGGetActiveDisplayList(0, nil, &count)
+    guard count > 0 else { return false }
+    var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+    CGGetActiveDisplayList(count, &ids, &count)
+    let displays = ids.map { CGDisplayBounds($0) }
+
     guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
-    let sizes = NSScreen.screens.map { $0.frame.size }
+    let tol: CGFloat = 4
     for info in list {
         guard let layer = info[kCGWindowLayer as String] as? Int, layer == 0,
               let bDict = info[kCGWindowBounds as String] as? [String: Any],
               let b = CGRect(dictionaryRepresentation: bDict as CFDictionary) else { continue }
-        for s in sizes where b.width >= s.width - 1 && b.height >= s.height - 1 { return true }
+        for d in displays where abs(b.minX - d.minX) <= tol && abs(b.minY - d.minY) <= tol
+            && abs(b.width - d.width) <= tol && abs(b.height - d.height) <= tol {
+            return true   // 窗口几乎完全盖住整块显示器 = 真全屏
+        }
     }
     return false
 }
@@ -764,6 +777,13 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var lastTick = Date()
     private var lastProtest = Date.distantPast
 
+    // 版本更新检测
+    private let appVersion = "1.1.0"
+    private let versionURL = "https://raw.githubusercontent.com/mayu95/CatBreakReminder/main/VERSION"
+    private let repoURL = "https://github.com/mayu95/CatBreakReminder"
+    private var latestVersion: String?            // 比当前新时才有值
+    private var lastUpdateCheck = Date.distantPast
+
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateStatusIcon()
@@ -779,6 +799,39 @@ final class AppController: NSObject, NSApplicationDelegate {
         lastTick = Date()
         let t = Timer.scheduledTimer(withTimeInterval: tick, repeats: true) { [weak self] _ in self?.onTick() }
         RunLoop.main.add(t, forMode: .common)
+
+        checkForUpdate()   // 启动时查一次
+    }
+
+    // MARK: 版本更新检测
+
+    private func checkForUpdate() {
+        lastUpdateCheck = Date()
+        guard let url = URL(string: versionURL) else { return }
+        var req = URLRequest(url: url)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        req.timeoutInterval = 10
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
+            guard let self, let data, let raw = String(data: data, encoding: .utf8) else { return }
+            let remote = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !remote.isEmpty, self.isNewer(remote, than: self.appVersion) else { return }
+            DispatchQueue.main.async { self.latestVersion = remote }   // 有新版，下次右键菜单会显示
+        }.resume()
+    }
+
+    /// 语义版本比较 a > b（如 1.2.0 > 1.1.3）。
+    private func isNewer(_ a: String, than b: String) -> Bool {
+        let pa = a.split(separator: ".").map { Int($0) ?? 0 }
+        let pb = b.split(separator: ".").map { Int($0) ?? 0 }
+        for i in 0..<max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0, y = i < pb.count ? pb[i] : 0
+            if x != y { return x > y }
+        }
+        return false
+    }
+
+    @objc private func openRepo() {
+        if let url = URL(string: repoURL) { NSWorkspace.shared.open(url) }
     }
 
     private func catImage(side: CGFloat) -> NSImage {
@@ -794,6 +847,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func onTick() {
         model.rolloverIfNewDay()   // 跨午夜归零今日专注
+        if Date().timeIntervalSince(lastUpdateCheck) > 12 * 3600 { checkForUpdate() }   // 每 12 小时查一次新版
 
         let now = Date()
         let delta = now.timeIntervalSince(lastTick)
@@ -889,7 +943,14 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func showContextMenu() {
         let menu = NSMenu()
+        if let v = latestVersion {   // 有新版本时置顶一行，点击打开仓库
+            let item = menu.addItem(withTitle: "🆕 有新版 v\(v)（点此查看，当前 v\(appVersion)）",
+                                    action: #selector(openRepo), keyEquivalent: "")
+            item.target = self
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: "🐾 测试一下小猫", action: #selector(testCat), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "关于（v\(appVersion)）", action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
         menu.addItem(withTitle: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         if let button = statusItem.button {
